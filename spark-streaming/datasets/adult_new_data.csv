@@ -1,0 +1,4 @@
+age,workclass,fnlwgt,education,education-num,marital-status,occupation,relationship,race,sex,capital-gain,capital-loss,hours-per-week,native-country,income
+42,Private,193524,HS-grad,9,Married-civ-spouse,Craft-repair,Husband,White,Male,0,0,40,United-States,<=50K
+30,Self-emp-inc,246219,Bachelors,13,Married-civ-spouse,Exec-managerial,Wife,White,Female,0,0,50,United-States,>50K
+55,Private,150000,Some-college,10,Divorced,Sales,Not-in-family,Black,Female,0,0,35,United-States,<=50K
