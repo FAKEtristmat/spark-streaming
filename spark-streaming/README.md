@@ -31,6 +31,7 @@ Le déploiement est réalisé avec le fichier `docker-compose.yml` fourni.
 Depuis le répertoire contenant le `docker-compose.yml` :
 
 ```bash
+cd /workspaces/spark-streaming/spark-streaming
 docker compose up -d
 ```
 
@@ -125,6 +126,12 @@ spark
 ```
 **Question**: A quoi sert chaque argument ? 
 
+* **`.builder`** : Active l'interface de configuration.
+* **`.appName(...)`** : Donne un nom à votre application pour l'identifier dans les logs et le Spark UI.
+* **`.master(...)`** : Indique l'adresse du cluster (le "maître") où le code doit s'exécuter.
+* **`.config("spark.sql.shuffle.partitions", "4")`** : Fixe à 4 le nombre de partitions pour les opérations de mélange de données (optimisation pour jeux de données légers).
+* **`.getOrCreate()`** : Lance la session ou récupère une instance existante.
+
 ---
 
 ## 4.2 Définition du schéma
@@ -155,6 +162,13 @@ schema_defined = StructType([
 
 **Question** : A quoi sert cette étape de creation de schema ?
 
+* Performance (Lecture optimisée) : Sans schéma, Spark doit scanner tout le fichier pour "deviner" (inférer) les types, ce qui ralentit considérablement le chargement des données.
+
+* Fiabilité (Typage strict) : Cela garantit que chaque colonne contient le bon type (ex: LongType pour les nombres). Cela évite les erreurs de typage inattendues ou des colonnes lues comme du texte par défaut.
+
+* Gestion des valeurs manquantes : Le troisième argument de StructField (ici True) indique que la colonne accepte des valeurs nulles (nullable). Cela permet à Spark de gérer proprement les données manquantes.
+
+* Format sans en-tête : C'est indispensable si vous travaillez avec des fichiers (comme des CSV) qui ne contiennent pas de ligne d'en-tête, car Spark ne saurait pas comment nommer ou typer les colonnes autrement.
 ---
 
 # 5. Lecture en flux continu
@@ -182,6 +196,27 @@ print("Waiting for data to be processed and appear in the table...")
 
 **Question** : Il est possible d'avoir la requête ``stream_memory_query`` en deux parties, pouvez vous la refaire autrement ? (L'idée est de comprendre ce qu'elle fais exactement)
 
+```bash
+# On définit uniquement la source du streaming
+raw_stream = (spark.readStream
+              .format("csv")
+              .schema(schema_defined)
+              .option("header", "true")
+              .option("maxFilesPerTrigger", 1)
+              .load(STREAM_PATH))
+
+```
+
+```bash
+# On prend le flux préparé et on définit la destination (le "sink")
+stream_memory_query = (raw_stream.writeStream
+                       .outputMode("append")
+                       .format("memory")
+                       .queryName("stream_data_check")
+                       .trigger(processingTime="5 seconds")
+                       .start())
+
+```
 ---
 
 ## 5.2 Affichage temps réel
@@ -236,9 +271,19 @@ Observer :
 
 ## Questions
 
-1. Pourquoi les données n’apparaissent-elles pas immédiatement ?
-2. Quel est le rôle de `maxFilesPerTrigger` ?
-3. Quelle différence existe-t-il entre batch et micro-batch ?
+
+
+**1. Pourquoi les données n'apparaissent pas immédiatement ?**
+Parce que Spark fonctionne par **micro-batchs**. Il ne lit pas les fichiers en continu seconde par seconde, mais attend que son cycle de traitement (le *trigger*) se déclenche pour aller vérifier s'il y a de nouveaux fichiers.
+
+**2. Quel est le rôle de `maxFilesPerTrigger` ?**
+C'est un **limiteur de vitesse**. Il empêche Spark d'essayer de traiter trop de fichiers d'un coup, ce qui protège la mémoire du cluster en cas d'arrivée massive de données.
+
+**3. Différence entre batch et micro-batch ?**
+
+* **Batch :** On traite un bloc de données fixe une seule fois (fin de traitement = fin du programme).
+* **Micro-batch :** Le programme tourne en continu. À chaque intervalle, il traite seulement les *nouveaux* fichiers arrivés depuis le dernier cycle.
+
 
 ---
 
@@ -256,12 +301,24 @@ Pendant que le stream tourne :
 
 ## Questions
 
-1. Les données disparaissent-elles du résultat ?
-2. Pourquoi ?
-3. Spark relit-il les anciens fichiers ?
-4. Comment Spark mémorise-t-il les fichiers déjà traités ?
-5. Que se passe t-il quand on remet le fichier supprimé ?
+Voici les réponses en version courte :
 
+**1. Les données disparaissent-elles ?**
+**Non.** Le streaming est en mode "ajout" (`append`). Une fois traitées, les données sont stockées dans la destination (la mémoire), indépendamment du fichier source.
+
+**2. Pourquoi ?**
+Parce que Spark traite le flux comme une suite d'événements à sens unique. Une fois transformée, la donnée est considérée comme un résultat final.
+
+**3. Spark relit-il les anciens fichiers ?**
+**Non.** Il est conçu pour être efficace et ne traite chaque donnée qu'une seule fois.
+
+**4. Comment Spark mémorise-t-il les fichiers déjà traités ?**
+Il utilise un **journal interne (checkpoint)**. Il garde une trace des fichiers déjà lus (leurs "offsets") pour savoir ce qu'il a déjà validé.
+
+**5. Que se passe-t-il si on remet le fichier supprimé ?**
+**Rien du tout.** Spark reconnaît le nom du fichier dans son journal et l'ignore, car il le considère comme "déjà traité". Pour qu'il le reprenne, il faudrait le renommer.
+
+C'est plus clair pour toi comme ça ?
 ---
 
 ## Point pédagogique important
@@ -281,6 +338,21 @@ La suppression du fichier source ne retire donc pas les données déjà ingéré
 ## 8.1 Création d’une table mémoire
 
 ```python
+
+stream_df = (
+    spark.readStream
+    .format("csv")
+    .schema(schema_defined)
+    .option("header", "true")
+    .option("maxFilesPerTrigger", 1)
+    .load(STREAM_PATH)
+)
+
+
+
+
+
+
 memory_query = (
     stream_df.writeStream
     .format("memory")
@@ -327,9 +399,17 @@ count_query = (
 
 ## Questions
 
-1. Pourquoi utilise-t-on le mode `complete` ici ?
-2. Quelle différence avec le mode `append` ?
+Voici les réponses en version courte :
 
+**Pourquoi le mode `complete` ?**
+Parce que tu fais un **`groupBy`**. Comme Spark doit recalculer le total à chaque nouveau batch, le mode `complete` lui dit : "Affiche-moi le résultat total actuel à chaque mise à jour".
+
+**Différence avec `append` :**
+
+* **`append`** : Ajoute seulement les *nouvelles lignes* arrivées (pour stocker des événements bruts).
+* **`complete`** : Réécrit la *table entière* avec les agrégations à jour (pour suivre des totaux/statistiques).
+
+C'est plus clair ?
 ---
 
 # 10. GroupBy en streaming
