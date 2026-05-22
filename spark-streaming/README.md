@@ -557,6 +557,92 @@ Les données doivent être :
 * traitées automatiquement par Spark Streaming ;
 * visualisées.
 
+```bash
+import requests
+import json
+import time
+import os
+from datetime import datetime
+
+API_KEY = "clé api" # Remplacez par votre clé API
+CONTRACT = "Lyon"
+URL = f"https://api.jcdecaux.com/vls/v1/stations?contract={CONTRACT}&apiKey={API_KEY}"
+OUTPUT_DIR = "./data_streaming/" # Le dossier que Spark va surveiller
+
+# Créer le dossier s'il n'existe pas
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+print("Démarrage de la récupération des données JCDecaux...")
+
+while True:
+    try:
+        response = requests.get(URL)
+        if response.status_code == 200:
+            stations = response.json()
+            
+            # Nom de fichier unique basé sur le timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = os.path.join(OUTPUT_DIR, f"stations_{timestamp}.json")
+            
+            # Écrire un objet JSON par ligne (idéal pour Spark)
+            with open(filename, 'w', encoding='utf-8') as f:
+                for station in stations:
+                    f.write(json.dumps(station) + '\n')
+                    
+            print(f"[{timestamp}] Données sauvegardées : {filename}")
+        else:
+            print(f"Erreur API : {response.status_code}")
+            
+    except Exception as e:
+        print(f"Erreur de connexion : {e}")
+        
+    # Attendre 1 minute avant le prochain appel (l'API JCDecaux se met à jour environ toutes les minutes)
+    time.sleep(60)
+```
+```bash
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
+from pyspark.sql.functions import col, round
+
+# 1. Initialiser la session Spark
+spark = SparkSession.builder \
+    .appName("JCDecaux_Streaming") \
+    .getOrCreate()
+
+# 2. Définir le schéma des données JSON attendues
+# (Basé sur la documentation JCDecaux, simplifié ici pour les champs essentiels)
+schema = StructType([
+    StructField("number", IntegerType(), True),
+    StructField("name", StringType(), True),
+    StructField("address", StringType(), True),
+    StructField("bike_stands", IntegerType(), True),
+    StructField("available_bike_stands", IntegerType(), True),
+    StructField("available_bikes", IntegerType(), True),
+    StructField("status", StringType(), True)
+])
+
+# 3. Lire le flux de données (surveiller le dossier)
+streaming_df = spark.readStream \
+    .schema(schema) \
+    .json("./data_streaming/")
+
+# 4. Traitement des données : par exemple, calculer le taux de remplissage et filtrer les stations ouvertes
+processed_df = streaming_df \
+    .filter(col("status") == "OPEN") \
+    .withColumn("taux_remplissage_pct", round((col("available_bikes") / col("bike_stands")) * 100, 2)) \
+    .select("number", "name", "available_bikes", "available_bike_stands", "taux_remplissage_pct")
+
+# 5. Démarrer le flux et afficher les résultats dans la console (pour tester)
+# "append" ajoute les nouvelles lignes, "complete" affiche tout le tableau à chaque mise à jour (nécessite une agrégation)
+query = processed_df.writeStream \
+    .outputMode("append") \
+    .format("console") \
+    .start()
+
+query.awaitTermination()
+```
+
+
 ---
 
 # 14. Présentation de l’API JCDecaux
