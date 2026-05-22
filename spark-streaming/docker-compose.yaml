@@ -68,6 +68,7 @@ services:
     volumes:
       - spark-data:/opt/spark/work-dir
       - ./stream-read:/opt/spark/stream-read
+      - ./work:/home/jovyan/work
 
   jupyter:
     image: jupyter/pyspark-notebook:latest

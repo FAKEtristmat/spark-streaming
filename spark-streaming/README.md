@@ -448,6 +448,35 @@ Créer d’autres agrégations :
 * moyenne des heures travaillées ;
 * moyenne d’âge par profession.
 
+
+# 1. Nombre de personnes par sexe
+```bash
+sex_df = stream_df.groupBy("sex").count()
+```
+
+# 2. Nombre de personnes par pays (native-country)
+```bash
+country_df = stream_df.groupBy("native-country").count()
+```
+
+
+# 3. Moyenne des heures travaillées
+```bash
+hours_df = stream_df.agg({"hours-per-week": "avg"})
+```
+
+
+# 4. Moyenne d'âge par profession (occupation)
+```bash
+age_occupation_df = stream_df.groupBy("occupation").avg("age")
+```
+
+
+# Exemple pour lancer un stream (remplacez le dataframe et le nom)
+```bash
+query = sex_df.writeStream.format("console").outputMode("complete").start()
+```
+
 ---
 
 # 11. Visualisation de l’évolution du flux
